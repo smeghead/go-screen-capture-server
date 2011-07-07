@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"fmt"
 	"template"
+	"strings"
 )
 
 /**
@@ -25,17 +26,17 @@ import (
  *  - kill firefox.
  *  - kill virtual display.
  */
-const MAX_VD = 1
+const MAX_VD = 3
 var workingBoxes = map[int] bool {}
 
 /**
   Get enable display number of virtual screen.
   */
 func GetDisplay() (int) {
-	for display, working := range workingBoxes {
-		fmt.Printf("[%d:%s]", display, working)
-	}
-	fmt.Println("=")
+//	for display, working := range workingBoxes {
+//		fmt.Printf("[%d:%s]", display, working)
+//	}
+//	fmt.Println("=")
 
 	for display, working := range workingBoxes {
 		if !working {
@@ -43,6 +44,7 @@ func GetDisplay() (int) {
 			return display
 		}
 	}
+
 	time.Sleep(1000000000)
 	return GetDisplay()
 }
@@ -52,11 +54,16 @@ var sem = make(chan int, MAX_VD)
 /**
   Get byte array content of given filename.
   */
-func GetFileByteArray(name string) ([]byte) {
+func GetFileByteArray(name string, retry int) ([]byte) {
+	if retry > 30 {
+		fmt.Printf("ERROR: failed to read file(%s)\n", name)
+		return []byte{}
+	}
 	content, err := ioutil.ReadFile(name)
 	if err != nil {
 		fmt.Printf("ERROR: failed to read file(%s) %s\n", name, err)
-		return []byte{};
+		time.Sleep(1000000000)
+		return GetFileByteArray(name, retry + 1)
 	}
 	return content
 }
@@ -68,16 +75,24 @@ func CaptureUrl(url string) []byte {
 	log.Print("CaptureUrl begin")
 	sem <- 1    // アクティブキューの空き待ち
 	log.Print("found active queue.")
-	log.Print("process")
-	log.Print(sem)
 	display := GetDisplay()
+	filename := fmt.Sprintf("/home/smeghead/work/go-screen-capture-server/images/tmp_%d.png", display)
+	dem := "?";
+	if strings.Index(url, dem) > -1 {
+		dem = "&"
+	}
+	//URLにディスプレイ番号として隠しパラメータを付加する。
+	url += fmt.Sprintf("%s___n=%d", dem, display)
+	log.Print(url)
+
+	os.Remove(filename)
 	environ := os.Environ()
 	environ = append(environ, fmt.Sprintf("DISPLAY=:%d.0", display))
 	command := "/home/smeghead/work/go-screen-capture-server/capture.sh"
 	args := []string {"capture.sh", fmt.Sprintf("%d", display), url}
 	RunCommand(command, args, environ)
-	name := fmt.Sprintf("/home/smeghead/work/go-screen-capture-server/images/tmp_%d.png", display)
-	bytes := GetFileByteArray(name)
+	//ファイルが生成されるまで待つ
+	bytes := GetFileByteArray(filename, 1)
 	workingBoxes[display] = false // displayの利用が完了したので、返却する。
 	<-sem       // 完了。次のリクエストを処理可能にする
 	log.Print("CaptureUrl end")
@@ -100,7 +115,7 @@ func InitVirtualScreen() {
 		// Firefoxの起動
 		go func (d int, env []string) {
 			command := "/usr/bin/firefox"
-			args := []string {"firefox", "-display", fmt.Sprintf(":%d", display), "-width", "1024", "-height", "800"}
+			args := []string {"firefox", "-display", fmt.Sprintf(":%d", display), "-width", "1024", "-height", "800", "-P", fmt.Sprintf("P%d", display)}
 			RunCommand(command, args, env)
 		}(display, environ)
 		time.Sleep(3000000000)
@@ -109,10 +124,8 @@ func InitVirtualScreen() {
 }
 
 func RunCommand(command string, args []string, environ []string) {
-	log.Print(command)
-	log.Print(args)
 	cmd, err := exec.Run(command, args, environ, ".", exec.DevNull, exec.Pipe, exec.MergeWithStdout)
-	log.Print("Ran")
+	log.Printf("Ran [%s]", command)
 	if err != nil {
 		log.Fatal(err)
 		log.Fatal("failed to execute external command.")
@@ -124,7 +137,6 @@ func RunCommand(command string, args []string, environ []string) {
 		log.Fatal("failed to execute external command.")
 		os.Exit(-1)
 	}
-	log.Print("--stdout--")
 	log.Print(string(b))
 }
 
