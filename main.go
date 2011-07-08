@@ -2,6 +2,9 @@ package main
 
 import (
 	"os"
+	"io"
+	"encoding/line"
+	"bytes"
 	"time"
 	"http"
 	"log"
@@ -27,26 +30,28 @@ import (
  *  - kill virtual display.
  */
 const MAX_VD = 3
-var workingBoxes = map[int] bool {}
+type WorkingBox struct {
+	displayNo int
+	working bool
+	lastUrl string
+}
+var workingBoxes = map[int] *WorkingBox {}
 
 /**
   Get enable display number of virtual screen.
   */
-func GetDisplay() (int) {
-//	for display, working := range workingBoxes {
-//		fmt.Printf("[%d:%s]", display, working)
-//	}
-//	fmt.Println("=")
-
-	for display, working := range workingBoxes {
-		if !working {
-			workingBoxes[display] = true
+func GetDisplay(url string) (int) {
+	for display, workingBox := range workingBoxes {
+		//動作中でなくて、以前変換したURLと別であること。同じURLだとキャプチャできないため。これはfirefox addonの方の問題。
+		if !workingBox.working && workingBox.lastUrl != url {
+			workingBoxes[display].working = true
+			workingBoxes[display].lastUrl = url
 			return display
 		}
 	}
 
 	time.Sleep(1000000000)
-	return GetDisplay()
+	return GetDisplay(url)
 }
 
 var sem = make(chan int, MAX_VD)
@@ -55,13 +60,13 @@ var sem = make(chan int, MAX_VD)
   Get byte array content of given filename.
   */
 func GetFileByteArray(name string, retry int) ([]byte) {
-	if retry > 30 {
+	if retry > 60 {
 		fmt.Printf("ERROR: failed to read file(%s)\n", name)
 		return []byte{}
 	}
 	content, err := ioutil.ReadFile(name)
 	if err != nil {
-		fmt.Printf("ERROR: failed to read file(%s) %s\n", name, err)
+		fmt.Printf("[INFO] waiting... %s\n", err)
 		time.Sleep(1000000000)
 		return GetFileByteArray(name, retry + 1)
 	}
@@ -75,7 +80,7 @@ func CaptureUrl(url string) []byte {
 	log.Print("CaptureUrl begin")
 	sem <- 1    // アクティブキューの空き待ち
 	log.Print("found active queue.")
-	display := GetDisplay()
+	display := GetDisplay(url)
 	filename := fmt.Sprintf("/home/smeghead/work/go-screen-capture-server/images/tmp_%d.png", display)
 	dem := "?";
 	if strings.Index(url, dem) > -1 {
@@ -88,12 +93,12 @@ func CaptureUrl(url string) []byte {
 	os.Remove(filename)
 	environ := os.Environ()
 	environ = append(environ, fmt.Sprintf("DISPLAY=:%d.0", display))
-	command := "/home/smeghead/work/go-screen-capture-server/capture.sh"
-	args := []string {"capture.sh", fmt.Sprintf("%d", display), url}
+	command := "/usr/bin/firefox"
+	args := []string {"firefox", "-display", fmt.Sprintf(":%d", display), "-remote", fmt.Sprintf("openUrl(%s)", url), fmt.Sprintf("P%d", display)}
 	RunCommand(command, args, environ)
 	//ファイルが生成されるまで待つ
 	bytes := GetFileByteArray(filename, 1)
-	workingBoxes[display] = false // displayの利用が完了したので、返却する。
+	workingBoxes[display].working = false // displayの利用が完了したので、返却する。
 	<-sem       // 完了。次のリクエストを処理可能にする
 	log.Print("CaptureUrl end")
 	return bytes
@@ -119,7 +124,8 @@ func InitVirtualScreen() {
 			RunCommand(command, args, env)
 		}(display, environ)
 		time.Sleep(3000000000)
-		workingBoxes[display] = false
+		// WorkingBoxsの初期化
+		workingBoxes[display] = &WorkingBox{display, false, ""}
 	}
 }
 
@@ -131,19 +137,52 @@ func RunCommand(command string, args []string, environ []string) {
 		log.Fatal("failed to execute external command.")
 		os.Exit(-1)
 	}
-	b, err := ioutil.ReadAll(cmd.Stdout)
-	if err != nil {
-		log.Fatal(err)
-		log.Fatal("failed to execute external command.")
-		os.Exit(-1)
+	
+	WriteFileLines(cmd.Stdout)
+}
+
+func WriteFileLines(file *os.File) {
+	var (
+		part []byte
+		prefix bool
+		err os.Error
+	)
+	reader := line.NewReader(file, 1024)
+	buffer := bytes.NewBuffer(make([]byte, 1024))
+	for {
+		if part, prefix, err = reader.ReadLine(); err != nil {
+			break
+		}
+		buffer.Write(part)
+		if !prefix {
+			log.Print(buffer.String())
+			buffer.Reset()
+		}
 	}
-	log.Print(string(b))
+	if err == os.EOF {
+		err = nil
+	}
 }
 
 // hello world, the web server
 func Capture(w http.ResponseWriter, req *http.Request) {
-	image := CaptureUrl(req.FormValue("url"))
+	url := req.FormValue("url")
 	header := w.Header()
+	if url == "" {
+		log.Printf("ERROR: url is required. (%s)\n", url)
+		w.WriteHeader(http.StatusInternalServerError)
+		header.Set("Content-Type", "text/plian;charset=UTF-8;")
+		io.WriteString(w, "Internal Server Error: please input url.\n")
+		return
+	}
+	image := CaptureUrl(url)
+	if len(image) == 0 {
+		log.Printf("ERROR: failed to capture. (%s)\n", url)
+		w.WriteHeader(http.StatusInternalServerError)
+		header.Set("Content-Type", "text/plian;charset=UTF-8;")
+		io.WriteString(w, "Internal Server Error: Failed to capture.\n")
+		return
+	}
 	header.Set("Content-Type", "image/png")
 	w.Write(image)
 }
@@ -156,7 +195,7 @@ func Index(w http.ResponseWriter, req *http.Request) {
 
 func main() {
 	InitVirtualScreen()
-	CaptureUrl("http://blog.starbug1.com/")
+//	CaptureUrl("http://blog.starbug1.com/")
 
 	http.HandleFunc("/", Index)
 	http.HandleFunc("/capture", Capture)
