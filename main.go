@@ -3,8 +3,6 @@ package main
 import (
 	"os"
 	"io"
-	"encoding/line"
-	"bytes"
 	"time"
 	"http"
 	"log"
@@ -94,7 +92,7 @@ func CaptureUrl(url string) []byte {
 	environ := os.Environ()
 	environ = append(environ, fmt.Sprintf("DISPLAY=:%d.0", display))
 	command := "/usr/bin/firefox"
-	args := []string {"firefox", "-display", fmt.Sprintf(":%d", display), "-remote", fmt.Sprintf("openUrl(%s)", url), fmt.Sprintf("P%d", display)}
+	args := []string {command, "-display", fmt.Sprintf(":%d", display), "-remote", fmt.Sprintf("openUrl(%s)", url), fmt.Sprintf("P%d", display)}
 	RunCommand(command, args, environ)
 	//ファイルが生成されるまで待つ
 	bytes := GetFileByteArray(filename, 1)
@@ -113,14 +111,14 @@ func InitVirtualScreen() {
 		// Xvfbの起動
 		go func (d int, env []string) {
 			command := "/usr/bin/Xvfb"
-			args := []string {"Xvfb", fmt.Sprintf(":%d", d), "-screen", "0", "1024x768x24"}
+			args := []string {command, fmt.Sprintf(":%d", d), "-screen", "0", "1024x768x24"}
 			RunCommand(command, args, env)
 		}(display, environ)
 		time.Sleep(3000000000)
 		// Firefoxの起動
 		go func (d int, env []string) {
 			command := "/usr/bin/firefox"
-			args := []string {"firefox", "-display", fmt.Sprintf(":%d", display), "-width", "1024", "-height", "800", "-P", fmt.Sprintf("P%d", display)}
+			args := []string {command, "-display", fmt.Sprintf(":%d", display), "-width", "1024", "-height", "800", "-P", fmt.Sprintf("P%d", display)}
 			RunCommand(command, args, env)
 		}(display, environ)
 		time.Sleep(3000000000)
@@ -130,38 +128,19 @@ func InitVirtualScreen() {
 }
 
 func RunCommand(command string, args []string, environ []string) {
-	cmd, err := exec.Run(command, args, environ, ".", exec.DevNull, exec.Pipe, exec.MergeWithStdout)
+	cmd := exec.Command(command)
+	cmd.Env = environ
+	cmd.Args = args
+	cmd.Dir = "."
+
 	log.Printf("Ran [%s]", command)
+	err := cmd.Run()
 	if err != nil {
 		log.Fatal(err)
 		log.Fatal("failed to execute external command.")
 		os.Exit(-1)
 	}
 	
-	WriteFileLines(cmd.Stdout)
-}
-
-func WriteFileLines(file *os.File) {
-	var (
-		part []byte
-		prefix bool
-		err os.Error
-	)
-	reader := line.NewReader(file, 1024)
-	buffer := bytes.NewBuffer(make([]byte, 1024))
-	for {
-		if part, prefix, err = reader.ReadLine(); err != nil {
-			break
-		}
-		buffer.Write(part)
-		if !prefix {
-			log.Print(buffer.String())
-			buffer.Reset()
-		}
-	}
-	if err == os.EOF {
-		err = nil
-	}
 }
 
 // hello world, the web server
@@ -173,6 +152,13 @@ func Capture(w http.ResponseWriter, req *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		header.Set("Content-Type", "text/plian;charset=UTF-8;")
 		io.WriteString(w, "Internal Server Error: please input url.\n")
+		return
+	}
+	if strings.Index(url, "http") != 0 {
+		log.Printf("ERROR: url is invalid. (%s)\n", url)
+		w.WriteHeader(http.StatusInternalServerError)
+		header.Set("Content-Type", "text/plian;charset=UTF-8;")
+		io.WriteString(w, "Internal Server Error: please input valid url.\n")
 		return
 	}
 	image := CaptureUrl(url)
@@ -197,10 +183,12 @@ func main() {
 	InitVirtualScreen()
 //	CaptureUrl("http://blog.starbug1.com/")
 
+	portNo := 1975
 	http.HandleFunc("/", Index)
 	http.HandleFunc("/capture", Capture)
-	err := http.ListenAndServe(":80", nil)
+	err := http.ListenAndServe(fmt.Sprintf(":%d", portNo), nil)
 	if err != nil {
 		log.Fatal("ListenAndServe: ", err.String())
 	}
+	log.Printf("INFO: start server on %d\n", portNo)
 }
