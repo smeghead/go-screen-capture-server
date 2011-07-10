@@ -6,6 +6,7 @@ import (
 	"time"
 	"http"
 	"log"
+	"rand"
 	"exec"
 	"io/ioutil"
 	"fmt"
@@ -39,14 +40,25 @@ var workingBoxes = map[int] *WorkingBox {}
   Get enable display number of virtual screen.
   */
 func GetDisplay(url string) (int) {
-	for display, workingBox := range workingBoxes {
+	for i := 0; i < MAX_VD * 2; i++ {
+		display := rand.Intn(MAX_VD) + 1
+		log.Printf("display is %d\n", display)
+		workingBox := workingBoxes[display]
 		//動作中でなくて、以前変換したURLと別であること。同じURLだとキャプチャできないため。これはfirefox addonの方の問題。
 		if !workingBox.working && workingBox.lastUrl != url {
-			workingBoxes[display].working = true
-			workingBoxes[display].lastUrl = url
+			workingBox.working = true
+			workingBox.lastUrl = url
 			return display
 		}
 	}
+//	for display, workingBox := range workingBoxes {
+//		//動作中でなくて、以前変換したURLと別であること。同じURLだとキャプチャできないため。これはfirefox addonの方の問題。
+//		if !workingBox.working && workingBox.lastUrl != url {
+//			workingBoxes[display].working = true
+//			workingBoxes[display].lastUrl = url
+//			return display
+//		}
+//	}
 
 	time.Sleep(1000000000)
 	return GetDisplay(url)
@@ -58,13 +70,13 @@ var sem = make(chan int, MAX_VD)
   Get byte array content of given filename.
   */
 func GetFileByteArray(name string, retry int) ([]byte) {
-	if retry > 60 {
+	if retry > 15 {
 		fmt.Printf("ERROR: failed to read file(%s)\n", name)
 		return []byte{}
 	}
 	content, err := ioutil.ReadFile(name)
 	if err != nil {
-		fmt.Printf("[INFO] waiting... %s\n", err)
+		fmt.Printf("INFO: waiting... %s\n", err)
 		time.Sleep(1000000000)
 		return GetFileByteArray(name, retry + 1)
 	}
@@ -122,9 +134,10 @@ func InitVirtualScreen() {
 			RunCommand(command, args, env)
 		}(display, environ)
 		time.Sleep(3000000000)
-		// WorkingBoxsの初期化
+		// WorkingBoxesの初期化
 		workingBoxes[display] = &WorkingBox{display, false, ""}
 	}
+	rand.Seed(time.Nanoseconds() % 1e9)
 }
 
 func RunCommand(command string, args []string, environ []string) {
@@ -132,15 +145,44 @@ func RunCommand(command string, args []string, environ []string) {
 	cmd.Env = environ
 	cmd.Args = args
 	cmd.Dir = "."
+	stdout, err1 := cmd.StdoutPipe()
+	if err1 != nil {
+		log.Fatal(err1)
+		log.Fatal("failed to retrieve pipe.")
+		os.Exit(-1)
+	}
 
 	log.Printf("Ran [%s]", command)
-	err := cmd.Run()
+	err := cmd.Start()
 	if err != nil {
 		log.Fatal(err)
 		log.Fatal("failed to execute external command.")
 		os.Exit(-1)
 	}
 	
+	WriteFileLines(stdout)
+}
+
+func WriteFileLines(reader io.Reader) {
+	var (
+		err os.Error
+		n int
+	)
+	buf := make([]byte, 1024)
+
+	log.Println("WriteFileLines");
+	for {
+		if n, err = reader.Read(buf); err != nil {
+			break
+		}
+		log.Print(string(buf[0:n]))
+	}
+	if err == os.EOF {
+		log.Println("stdout end");
+		err = nil
+	} else {
+		log.Println("ERROR: " + err.String());
+	}
 }
 
 // hello world, the web server
