@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<?xml-stylesheet href="chrome://global/skin/global.css" type="text/css"?>
+
+	<!-- オーバーレイすることを表す -->
+	<overlay id="screenshots" 
+		xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul">
+
+	<!-- ステータスバーに追加 -->
+	<statusbar id="status-bar">
+		<statusbarpanel id="my-panel" label="screenshots"/>
+	</statusbar>
+
+	<!-- ツールメニューの追加 -->
+	<menupopup id="menu_ToolsPopup">
+		<menuitem insertafter="devToolsSeparator" label="screenshots"
+			accesskey="H" oncommand="hello();" />
+	</menupopup>
+
+	<!-- JavaScriptファイルのインポート -->
+	<script type="application/x-javascript" src="screenshots.js" />
+
+</overlay>

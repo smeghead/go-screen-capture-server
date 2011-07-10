@@ -70,7 +70,7 @@ var sem = make(chan int, MAX_VD)
   Get byte array content of given filename.
   */
 func GetFileByteArray(name string, retry int) ([]byte) {
-	if retry > 15 {
+	if retry > 20 {
 		fmt.Printf("ERROR: failed to read file(%s)\n", name)
 		return []byte{}
 	}
@@ -92,12 +92,6 @@ func CaptureUrl(url string) []byte {
 	log.Print("found active queue.")
 	display := GetDisplay(url)
 	filename := fmt.Sprintf("/home/smeghead/work/go-screen-capture-server/images/tmp_%d.png", display)
-	dem := "?";
-	if strings.Index(url, dem) > -1 {
-		dem = "&"
-	}
-	//URLにディスプレイ番号として隠しパラメータを付加する。
-	url += fmt.Sprintf("%s___n=%d", dem, display)
 	log.Print(url)
 
 	os.Remove(filename)
