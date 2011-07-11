@@ -29,10 +29,13 @@ import (
  *  - kill virtual display.
  */
 const MAX_VD = 3
+const MAX_EXEC_COUNT = 10
 type WorkingBox struct {
-	displayNo int
-	working bool
-	lastUrl string
+	DisplayNo int
+	Working bool
+	LastUrl string
+	Firefox *exec.Cmd
+	Count int
 }
 var workingBoxes = map[int] *WorkingBox {}
 
@@ -42,23 +45,16 @@ var workingBoxes = map[int] *WorkingBox {}
 func GetDisplay(url string) (int) {
 	for i := 0; i < MAX_VD * 2; i++ {
 		display := rand.Intn(MAX_VD) + 1
-		log.Printf("display is %d\n", display)
 		workingBox := workingBoxes[display]
 		//動作中でなくて、以前変換したURLと別であること。同じURLだとキャプチャできないため。これはfirefox addonの方の問題。
-		if !workingBox.working && workingBox.lastUrl != url {
-			workingBox.working = true
-			workingBox.lastUrl = url
+		//if !workingBox.Working && workingBox.LastUrl != url {
+		if !workingBox.Working {
+			workingBox.Working = true
+			workingBox.LastUrl = url
 			return display
 		}
+		log.Printf("display is %d, working or same url.\n", display)
 	}
-//	for display, workingBox := range workingBoxes {
-//		//動作中でなくて、以前変換したURLと別であること。同じURLだとキャプチャできないため。これはfirefox addonの方の問題。
-//		if !workingBox.working && workingBox.lastUrl != url {
-//			workingBoxes[display].working = true
-//			workingBoxes[display].lastUrl = url
-//			return display
-//		}
-//	}
 
 	time.Sleep(1000000000)
 	return GetDisplay(url)
@@ -99,58 +95,91 @@ func CaptureUrl(url string) []byte {
 	environ = append(environ, fmt.Sprintf("DISPLAY=:%d.0", display))
 	command := "/usr/bin/firefox"
 	args := []string {command, "-display", fmt.Sprintf(":%d", display), "-remote", fmt.Sprintf("openUrl(%s)", url), fmt.Sprintf("P%d", display)}
-	RunCommand(command, args, environ)
+	RunCommand(command, args, environ, nil)
 	//ファイルが生成されるまで待つ
 	bytes := GetFileByteArray(filename, 1)
-	workingBoxes[display].working = false // displayの利用が完了したので、返却する。
+	workingBoxes[display].Count += 1 // 実行カウントをカウントアップ
+	log.Printf("displayNo: %d Count: %d\n", display, workingBoxes[display].Count)
+	// 既定回数を超えたfirefoxは再起動する。
+	if (workingBoxes[display].Count >= MAX_EXEC_COUNT) {
+		log.Printf("firefox restart display: %d\n", display)
+		KillFirefox(display)
+		RunFirefox(display, workingBoxes[display])
+		go func () {
+			//10秒間、初期化のために待機する。
+			time.Sleep(10000000000)
+			workingBoxes[display].Count = 0
+			workingBoxes[display].Working = false
+		}()
+	} else {
+		workingBoxes[display].Working = false // displayの利用が完了したので、返却する。
+	}
 	<-sem       // 完了。次のリクエストを処理可能にする
 	log.Print("CaptureUrl end")
 	return bytes
 }
 
+func KillFirefox(display int) {
+	if (workingBoxes[display].Firefox != nil) {
+		err := workingBoxes[display].Firefox.Process.Kill()
+		if err != nil {
+			log.Fatal(err)
+			log.Fatal("failed to kill process.")
+		}
+	}
+}
+func RunFirefox(display int, workingBox *WorkingBox) {
+	environ := os.Environ()
+	environ = append(environ, fmt.Sprintf("DISPLAY=:%d.0", display))
+	go func (d int, env []string) {
+		command := "/usr/bin/firefox"
+		args := []string {command, "-display", fmt.Sprintf(":%d", display), "-width", "1024", "-height", "800", "-P", fmt.Sprintf("P%d", display)}
+		RunCommand(command, args, env, workingBox)
+	}(display, environ)
+	time.Sleep(3000000000)
+}
 func InitVirtualScreen() {
 	for i := 0; i < MAX_VD; i++ {
-		fmt.Printf("%d\n", i)
 		display := i + 1
 		environ := os.Environ()
 		environ = append(environ, fmt.Sprintf("DISPLAY=:%d.0", i + 1))
+
+		// WorkingBoxesの初期化
+		workingBox := &WorkingBox{DisplayNo: display, Working: false, LastUrl: ""}
+
 		// Xvfbの起動
 		go func (d int, env []string) {
 			command := "/usr/bin/Xvfb"
 			args := []string {command, fmt.Sprintf(":%d", d), "-screen", "0", "1024x768x24"}
-			RunCommand(command, args, env)
+			RunCommand(command, args, env, nil)
 		}(display, environ)
 		time.Sleep(3000000000)
 		// Firefoxの起動
-		go func (d int, env []string) {
-			command := "/usr/bin/firefox"
-			args := []string {command, "-display", fmt.Sprintf(":%d", display), "-width", "1024", "-height", "800", "-P", fmt.Sprintf("P%d", display)}
-			RunCommand(command, args, env)
-		}(display, environ)
-		time.Sleep(3000000000)
+		RunFirefox(display, workingBox);
 		// WorkingBoxesの初期化
-		workingBoxes[display] = &WorkingBox{display, false, ""}
+		workingBoxes[display] = workingBox
 	}
 	rand.Seed(time.Nanoseconds() % 1e9)
 }
 
-func RunCommand(command string, args []string, environ []string) {
+func RunCommand(command string, args []string, environ []string, workingBox *WorkingBox) {
 	cmd := exec.Command(command)
 	cmd.Env = environ
 	cmd.Args = args
 	cmd.Dir = "."
-	stdout, err1 := cmd.StdoutPipe()
-	if err1 != nil {
-		log.Fatal(err1)
-		log.Fatal("failed to retrieve pipe.")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		log.Fatal("failed to retrieve pipe. %s", err)
 		os.Exit(-1)
 	}
 
+	if (workingBox != nil) {
+		workingBox.Firefox = cmd
+	}
 	log.Printf("Ran [%s]", command)
-	err := cmd.Start()
+	err = cmd.Start()
 	if err != nil {
-		log.Fatal(err)
-		log.Fatal("failed to execute external command.")
+		log.Fatal("failed to execute external command. %s", err)
 		os.Exit(-1)
 	}
 	

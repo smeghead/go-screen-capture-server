@@ -13,51 +13,50 @@ var screenshots = {
   },
 
   onPageLoad: function(aEvent) {
-    var doc = aEvent.originalTarget; // doc は "onload" event を起こしたドキュメント
-    if (doc.nodeName != "#document") return;
-    var currentWindow = screenshots.searchWindow(doc);
-    if (!currentWindow) return;
-    dump('adon loaded document\n');
-    // アクティブなウィンドウのlocationと同じでない場合は、iframeコンテンツとみなして、キャプチャしない。
-    if (currentWindow.document.location != doc.location) return;
-    dump('addon currentWindow location: ' + currentWindow.document.location + '\n');
-
-    setTimeout(function() {
-      try {
-        dump('addon start caputure: ' + currentWindow.document.location + '\n');
-        var region = screenshots.getCompletePageRegion(doc);
-        dump('addon got region: ' + region + '\n');
-        var canvas = document.createElementNS("http://www.w3.org/1999/xhtml", "html:canvas");
-        dump('addon got canvas: ' + canvas + '\n');
-        screenshots.copyRegionToCanvas(doc, region, canvas);
-        dump('addon copied\n');
-        var dataUrl = canvas.toDataURL('image/png', '');
-        dump('addon got dataUrl: ' + '\n');
-        var IOService = Components.Constructor("@mozilla.org/network/io-service;1", "nsIIOService");
-        dump('addon got IOService: ' + IOService + '\n');
-        var nsUri = new IOService().newURI(dataUrl, "UTF8", null);
-        dump('addon got nsUri: ' + nsUri + '\n');
-
-        var nsFile = Components.classes["@mozilla.org/file/local;1"].createInstance(Components.interfaces.nsILocalFile);
-        //ディスプレイ番号をプロファイル名から取得する。
-        var displayNo = screenshots.getDisplayNo();
-        dump('addon displayNo: ' + displayNo + '\n');
-
-        nsFile.initWithPath('/home/smeghead/work/go-screen-capture-server/images/tmp_' + displayNo + '.png');
-        dump('addon initWithPath\n');
-//         var persist = screenshots.createPersist();
-        var persist = Components.classes["@mozilla.org/embedding/browser/nsWebBrowserPersist;1"].createInstance(Components.interfaces.nsIWebBrowserPersist);
-        persist.persistFlags = Components.interfaces.nsIWebBrowserPersist.PERSIST_FLAGS_REPLACE_EXISTING_FILES;
-        persist.persistFlags |= Components.interfaces.nsIWebBrowserPersist.PERSIST_FLAGS_AUTODETECT_APPLY_CONVERSION;
-
-        dump('addon persist\n');
-        persist.saveURI(nsUri, null, null, null, null, nsFile); //TODO error handling.
-        dump('addon saveURI\n');
-      } catch (e) {
-        dump("addon " + e);
-   //      alert('error: ' + e);
+    try {
+      var doc = aEvent.originalTarget; // doc は "onload" event を起こしたドキュメント
+      if (doc.nodeName != "#document") return;
+      if (!doc.location.toString().match(/^http/)) {
+        dump('not http match: ' + doc.location + '\n');
+        return;
       }
-    }, 2000);
+      var currentWindow = screenshots.searchWindow(doc);
+      if (!currentWindow) return;
+      dump('addon currentWindow location: ' + currentWindow.document.location + '\n');
+
+      setTimeout(function() {
+        try {
+          dump('addon start caputure: ' + currentWindow.document.location + '\n');
+          var region = screenshots.getCompletePageRegion(doc);
+          var canvas = document.createElementNS("http://www.w3.org/1999/xhtml", "html:canvas");
+          screenshots.copyRegionToCanvas(doc, region, canvas);
+          dump('addon copied\n');
+          var dataUrl = canvas.toDataURL('image/png', '');
+          var IOService = Components.Constructor("@mozilla.org/network/io-service;1", "nsIIOService");
+          var nsUri = new IOService().newURI(dataUrl, "UTF8", null);
+
+          var nsFile = Components.classes["@mozilla.org/file/local;1"].createInstance(Components.interfaces.nsILocalFile);
+          //ディスプレイ番号をプロファイル名から取得する。
+          var displayNo = screenshots.getDisplayNo();
+          dump('addon displayNo: ' + displayNo + '\n');
+
+          nsFile.initWithPath('/home/smeghead/work/go-screen-capture-server/images/tmp_' + displayNo + '.png');
+          dump('addon initWithPath\n');
+          //var persist = screenshots.createPersist();
+          var persist = Components.classes["@mozilla.org/embedding/browser/nsWebBrowserPersist;1"].createInstance(Components.interfaces.nsIWebBrowserPersist);
+          persist.persistFlags = Components.interfaces.nsIWebBrowserPersist.PERSIST_FLAGS_REPLACE_EXISTING_FILES;
+          persist.persistFlags |= Components.interfaces.nsIWebBrowserPersist.PERSIST_FLAGS_AUTODETECT_APPLY_CONVERSION;
+
+          dump('addon persist\n');
+          persist.saveURI(nsUri, null, null, null, null, nsFile);
+          dump('addon saveURI\n');
+        } catch (e) {
+          dump('addon ERROR: ' + e);
+        }
+      }, 2000);
+    } catch (e) {
+      dump('addon ERROR: ' + e);
+    }
   },
   createPersist: function() {
     var persist = Components.classes["@mozilla.org/embedding/browser/nsWebBrowserPersist;1"].createInstance(Components.interfaces.nsIWebBrowserPersist);
@@ -99,8 +98,9 @@ var screenshots = {
       var num = win.browsers.length;
       for (var i = 0; i < num; i++) {
         var b = win.getBrowserAtIndex(i);
-//        dump(i + ' ' + b.currentURI.spec + '\n');
-        if (b.currentURI.spec == doc.location) {
+        // アクティブなウィンドウのlocationと同じでない場合は、iframeコンテンツとみなして、キャプチャしない。
+        // FIXME この判定条件は不十分(リダイレクトされた場合に、目的のコンテンツであるかどうかを判定できないため)
+        if (b.contentWindow.document.location == doc.location) {
           return b.contentWindow;
         }
       }
@@ -144,6 +144,7 @@ var screenshots = {
   },
   getDisplayNo: function() {
     var profileName = screenshots.getCurrentProfileName();
+    dump('profileName: ' + profileName + '\n');
     var results = profileName.match(/P(\d+)/);
     return results[1];
   }
