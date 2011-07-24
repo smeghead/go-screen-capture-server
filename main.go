@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"io"
+	"flag"
 	"time"
 	"http"
 	"log"
@@ -12,6 +13,7 @@ import (
 	"fmt"
 	"template"
 	"strings"
+	"./appconfig"
 )
 
 /**
@@ -28,8 +30,6 @@ import (
  *  - kill firefox.
  *  - kill virtual display.
  */
-const MAX_VD = 3
-const MAX_EXEC_COUNT = 10
 type WorkingBox struct {
 	DisplayNo int
 	Working bool
@@ -38,13 +38,14 @@ type WorkingBox struct {
 	Count int
 }
 var workingBoxes = map[int] *WorkingBox {}
+var appConfig appconfig.AppConfig
 
 /**
   Get enable display number of virtual screen.
   */
 func GetDisplay(url string) (int) {
-	for i := 0; i < MAX_VD * 2; i++ {
-		display := rand.Intn(MAX_VD) + 1
+	for i := 0; i < appConfig.MaxVirtualDesktop * 2; i++ {
+		display := rand.Intn(appConfig.MaxVirtualDesktop) + 1
 		workingBox := workingBoxes[display]
 		//動作中でなくて、以前変換したURLと別であること。同じURLだとキャプチャできないため。これはfirefox addonの方の問題。
 		//if !workingBox.Working && workingBox.LastUrl != url {
@@ -60,7 +61,7 @@ func GetDisplay(url string) (int) {
 	return GetDisplay(url)
 }
 
-var sem = make(chan int, MAX_VD)
+var sem chan int
 
 /**
   Get byte array content of given filename.
@@ -87,7 +88,7 @@ func CaptureUrl(url string) []byte {
 	sem <- 1    // アクティブキューの空き待ち
 	log.Print("found active queue.")
 	display := GetDisplay(url)
-	filename := fmt.Sprintf("/home/smeghead/work/go-screen-capture-server/images/tmp_%d.png", display)
+	filename := fmt.Sprintf("%s/tmp_%d.png", appConfig.ImagePath, display)
 	log.Print(url)
 
 	os.Remove(filename)
@@ -101,7 +102,7 @@ func CaptureUrl(url string) []byte {
 	workingBoxes[display].Count += 1 // 実行カウントをカウントアップ
 	log.Printf("displayNo: %d Count: %d\n", display, workingBoxes[display].Count)
 	// 既定回数を超えたfirefoxは再起動する。
-	if (workingBoxes[display].Count >= MAX_EXEC_COUNT) {
+	if (workingBoxes[display].Count >= appConfig.MaxExecCount) {
 		log.Printf("firefox restart display: %d\n", display)
 		KillFirefox(display)
 		RunFirefox(display, workingBoxes[display])
@@ -139,7 +140,7 @@ func RunFirefox(display int, workingBox *WorkingBox) {
 	time.Sleep(3000000000)
 }
 func InitVirtualScreen() {
-	for i := 0; i < MAX_VD; i++ {
+	for i := 0; i < appConfig.MaxVirtualDesktop; i++ {
 		display := i + 1
 		environ := os.Environ()
 		environ = append(environ, fmt.Sprintf("DISPLAY=:%d.0", i + 1))
@@ -242,6 +243,20 @@ func Index(w http.ResponseWriter, req *http.Request) {
 	p := map[string] string {}
 	t, _ := template.ParseFile("index.html", nil)
 	t.Execute(w, p)
+}
+
+func init() {
+	var (
+		configFilename string
+		err os.Error
+	)
+	flag.StringVar(&configFilename, "f", "./appconfig.conf", "config file name")
+	appConfig, err = appconfig.Parse(configFilename)
+	if err != nil {
+		fmt.Println("ERROR: failed to load config.")
+		os.Exit(-1)
+	}
+	sem = make(chan int, appConfig.MaxVirtualDesktop)
 }
 
 func main() {
