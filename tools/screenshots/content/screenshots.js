@@ -50,6 +50,27 @@ var screenshots = {
           dump('addon persist\n');
           persist.saveURI(nsUri, null, null, null, null, nsFile);
           dump('addon saveURI\n');
+          //閉じる。
+          var gBrowser = window.QueryInterface(Components.interfaces.nsIInterfaceRequestor)
+             .getInterface(Components.interfaces.nsIWebNavigation)
+             .QueryInterface(Components.interfaces.nsIDocShellTreeItem)
+             .rootTreeItem
+             .QueryInterface(Components.interfaces.nsIInterfaceRequestor)
+             .getInterface(Components.interfaces.nsIDOMWindow).gBrowser;
+
+          var num = gBrowser.browsers.length;
+          if (num > 1) {
+            for (var i = 0; i < num - 1; i++) {
+              var b = gBrowser.getBrowserAtIndex(i);
+              try {
+                dump(b.currentURI.spec + "\n");
+                gBrowser.removeCurrentTab();
+              } catch(e) {
+                dump(e);
+                Components.utils.reportError(e);
+              }
+            }
+          }
         } catch (e) {
           dump('addon ERROR: ' + e);
         }

@@ -95,7 +95,8 @@ func CaptureUrl(url string) []byte {
 	environ := os.Environ()
 	environ = append(environ, fmt.Sprintf("DISPLAY=:%d.0", display))
 	command := "/usr/bin/firefox"
-	args := []string {command, "-display", fmt.Sprintf(":%d", display), "-remote", fmt.Sprintf("openUrl(%s)", url), fmt.Sprintf("P%d", display)}
+	args := []string {command, "-display", fmt.Sprintf(":%d", display), "-remote", fmt.Sprintf("openUrl(%s)", url), "-P", fmt.Sprintf("P%d", display)}
+	//args := []string {command, "-display", fmt.Sprintf(":%d", display), "-remote", fmt.Sprintf("openUrl(%s)", url), fmt.Sprintf("P%d", display)}
 	RunCommand(command, args, environ, nil)
 	//ファイルが生成されるまで待つ
 	bytes := GetFileByteArray(filename, 1)
